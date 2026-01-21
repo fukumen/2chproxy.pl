@@ -1725,7 +1725,7 @@ sub run_proxy() {
         my $client  = shift;
         $semaphore->down(1);
         eval {
-          \&connection($client);
+          &connection($client);
         };
         if ($@) {
           &print_log(LOG_WARN, $@."\n");
