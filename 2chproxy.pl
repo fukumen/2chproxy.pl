@@ -1213,6 +1213,11 @@ sub change_access_Nch_request() {
   if ($PROXY_CONFIG->{ENABLE_ALWAYS_HTTPS_FOR_2CH}) {
     $request->uri->scheme("https");
     $request->uri->port(443);
+    my $referer = $request->header('Referer');
+    if ($referer) {
+      $referer =~ s|^http:|https:|;
+      $request->header('Referer' => $referer);
+    }
   }
 
   if ($request->uri->host =~ m@(\.\d+ch\.net|\.bbspink\.com)$@) {
@@ -1276,6 +1281,11 @@ sub upgrade_2ch_request() {
   if ($PROXY_CONFIG->{ENABLE_ALWAYS_HTTPS_FOR_2CH}) {
     $request->uri->scheme("https");
     $request->uri->port(443);
+    my $referer = $request->header('Referer');
+    if ($referer) {
+      $referer =~ s|^http:|https:|;
+      $request->header('Referer' => $referer);
+    }
   }
 }
 
