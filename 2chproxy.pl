@@ -56,6 +56,7 @@ use Thread::Semaphore;
 
 #定数の宣言(実質的なコンフィグファイル)
 my $PROXY_CONFIG  = {
+  PROXY_CONFIG_ENV_PREFIX => '',                      #'NCPX_'などとすると環境変数NCPX_USER_AGENTなどの値を優先
   PROXY_CONFIG_FILE => '',                            #コンフィグファイル
   DEDICATED_BROWSER => "JD",                          #使用している専ブラの名前
                                                       #スクレイピング時にDAT_DIRECTORYと合わせてローカルのdatへアクセスするのに必要
@@ -1390,7 +1391,7 @@ sub scraping_2ch_request() {
     $is_gzip  = $6;
 
     $hash_key  = $domain.$category.$dat;
-    $rewrite_uri  = $uri->scheme()."://".$host.$domain."/test/read.cgi/".$category."/".$dat."/";
+    $rewrite_uri  = $uri->scheme()."://".$host.$domain."/test/read.cgi/c/".$category."/".$dat."/";
   }
   else {
     my $response  = HTTP::Response->new(500, 'Invalid URL');
@@ -1730,6 +1731,11 @@ sub run_proxy() {
 }
 
 sub load_config() {
+  &load_config_file();
+  &load_config_env();
+}
+
+sub load_config_file() {
   if ($PROXY_CONFIG->{PROXY_CONFIG_FILE} && -f $PROXY_CONFIG->{PROXY_CONFIG_FILE}) {
     require YAML::Tiny;
     my $YAML  = YAML::Tiny->read($PROXY_CONFIG->{PROXY_CONFIG_FILE});
@@ -1756,6 +1762,25 @@ sub load_config() {
   }
   else {
     &print_log(LOG_INFO, 'CONFIG', "config file: ".$PROXY_CONFIG->{PROXY_CONFIG_FILE}." is not found.\n");
+  }
+}
+
+sub load_config_env() {
+  my $prefix = $PROXY_CONFIG->{PROXY_CONFIG_ENV_PREFIX} or return;
+
+  foreach my $key (keys(%$PROXY_CONFIG)) {
+    next unless exists $ENV{"$prefix$key"};
+
+    my $newvar = $ENV{"$prefix$key"};
+    next unless $newvar ne $PROXY_CONFIG->{$key};
+
+    &print_log(LOG_INFO, 'CONFIG', "$key: $newvar\n");
+
+    if ($key eq 'HANDLED_COOKIES') {
+        $newvar = [ split ' ', $newvar ];
+    }
+
+    $PROXY_CONFIG->{$key} = $newvar;
   }
 }
 
