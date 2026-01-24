@@ -47,6 +47,7 @@ use File::Basename qw(dirname basename);
 use Getopt::Long qw(:config posix_default no_ignore_case gnu_compat);
 use HTTP::Daemon;
 use IO::Compress::Gzip qw(gzip $GzipError);
+use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
 use LWP::UserAgent;
 use Scalar::Util qw(blessed);
 use URI;
@@ -133,6 +134,7 @@ my $PROXY_CONFIG  = {
   PID_FILE_NAME_WIN32 => dirname($0)."/2chproxy.pid", #pidが書かれたファイル、2重起動禁止にも用いている(Windows)
   LOG_FILE_NAME_WIN32 => dirname($0)."/2chproxy.log", #ログファイル(Windows)
   LOG_LEVEL => 5,                                     #ログ出力の閾値
+  LOG_RESPONSE_BODY => 1,                             #レスポンスのボディをログ出力するか(要LOG_LEVEL:7)
   #以下WEBスクレイピングの際の正規表現
   HTML2DAT_TITLE_REGEX => '<title>(.*?)(\x0d?\x0a?)</title>',             #タイトル抽出
   #                       1.レス番                        2.目欄           3.名前/ハッシュ                4.1.日付                       4.2.SE1                       4.3.ID     4.4 <0000>                               5.BE1           6.BE2          7.本文
@@ -947,6 +949,12 @@ sub connection() {
       $dport  = $uri->port;
       &print_log(LOG_DEBUG, 'HTTP', "destination port: ".$dport."\n");
     }
+    &print_log(LOG_DEBUG, 'HTTP', "request(recv) vvvvvvvvvvvvvvvvvvvvvvvvvv\n".$request->as_string."\n");
+    &print_log(LOG_DEBUG, 'HTTP', "request(recv) ^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+
+    #JDimに合わせ込む用
+    #$request->remove_header('Proxy-Connection');
+    #$request->remove_header('Expect');
 
     #443ポートへのCONNECTのみhttps通信として取り扱う
     if ($request->method eq 'CONNECT') {
@@ -1066,7 +1074,13 @@ sub connection() {
       $request->header('Connection' => 'close');
     }
 
-    &print_log(LOG_DEBUG, 'HTTP', $request->as_string."\n");
+    #JDimに合わせ込む用
+    #$request->remove_header('Upgrade-Insecure-Requests');
+    #$request->push_header('Upgrade-Insecure-Requests' => '1');
+
+    #実際に送信される内容や順序がどうなるかはLWP次第
+    &print_log(LOG_DEBUG, 'HTTP', "request(send) vvvvvvvvvvvvvvvvvvvvvvvvvv\n".$request->as_string."\n");
+    &print_log(LOG_DEBUG, 'HTTP', "request(send) ^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
 
     my $chunked = 0;
 
@@ -1074,6 +1088,8 @@ sub connection() {
         my ($response, $ua, $h) = @_;
 
         &print_log(LOG_NOTICE, 'HTTP', $response->protocol." ".$response->status_line." | ".$response->request->method." ".$response->request->uri->as_string."\n");
+        &print_log(LOG_DEBUG, 'HTTP', "response header(recv) vvvvvvvvvvvvvvvvvvvvvvvvvv\n".$response->as_string("\r\n")."\n");
+        &print_log(LOG_DEBUG, 'HTTP', "response header(recv) ^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
 
         #HTTP/1.1のkeep-alive以外はConnection: close
         if (!$keep_alive ||
@@ -1121,7 +1137,6 @@ sub connection() {
 
         #"\r\n"の指定はした方が良い
         my $header  = $response->as_string("\r\n");
-        &print_log(LOG_DEBUG, 'HTTP', $header);
         if (!$buffered) {
           print {$client} $header;
         }
@@ -1129,9 +1144,37 @@ sub connection() {
       owner => '2chproxy',
     );
 
+    my $debug_gzip_buffer = '';
     my $response  = $user_agent->simple_request($request,
       sub {
         my ($chunk_data, $response, $proto) = @_;
+
+        if ($PROXY_CONFIG->{LOG_RESPONSE_BODY}) {
+          if ($response->header('Content-Encoding')) {
+            if ($response->header('Content-Encoding') =~ m/gzip/i) {
+              $debug_gzip_buffer .= $chunk_data;
+            }
+          }
+          else {
+            my $content_type = $response->header('Content-Type');
+            if (defined($content_type) && $content_type =~ m/text|html/i) {
+              my $decoded;
+              my $charset = $response->content_charset;
+              if (!$charset && $enable_guess_encoding) {
+                $charset = 'Guess';
+              }
+              $charset ||= 'cp932';
+              eval {
+                $decoded = Encode::decode($charset, $chunk_data);
+              };
+              if ($@) {
+                $decoded = Encode::decode('cp932', $chunk_data);
+              }
+              &print_log(LOG_DEBUG, 'HTTP', "body(recv) vvvvvvvvvvvvvvvvvvvvvvvvvv\n".$decoded."\n");
+              &print_log(LOG_DEBUG, 'HTTP', "body(recv) ^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+            }
+          }
+        }
 
         if ($buffered) {
           $response->add_content($chunk_data);
@@ -1153,6 +1196,24 @@ sub connection() {
     if ($chunked) {
       &print_log(LOG_DEBUG, 'HTTP', "send chunked footer\n");
       print {$client} "0\r\n\r\n";
+    }
+    if ($PROXY_CONFIG->{LOG_RESPONSE_BODY} && length($debug_gzip_buffer) > 0) {
+      my $decoded;
+      if (gunzip \$debug_gzip_buffer => \$decoded) {
+        my $charset = $response->content_charset;
+        if (!$charset && $enable_guess_encoding) {
+          $charset = 'Guess';
+        }
+        $charset ||= 'cp932';
+        eval {
+          $decoded = Encode::decode($charset, $decoded);
+        };
+        if ($@) {
+          $decoded = Encode::decode('cp932', $decoded);
+        }
+        &print_log(LOG_DEBUG, 'HTTP', "gunzip content vvvvvvvvvvvvvvvvvvvvvvvvvv\n".$decoded."\n");
+        &print_log(LOG_DEBUG, 'HTTP', "gunzip content ^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+      }
     }
     if ($response->header('X-Died')) {
       &print_log(LOG_NOTICE, 'HTTP', "An Error Occured: ".$response->header('X-Died')."\n");
