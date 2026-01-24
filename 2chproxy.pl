@@ -1743,6 +1743,9 @@ sub run_proxy() {
 sub load_config() {
   &load_config_file();
   &load_config_env();
+
+  #グローバル変数を一新する
+  &initialize_global_var();
 }
 
 sub load_config_file() {
@@ -1766,8 +1769,6 @@ sub load_config_file() {
           }
         }
       }
-      #コンフィグファイルの読み込みに成功したらグローバル変数を一新する
-      &initialize_global_var();
     }
   }
   else {
