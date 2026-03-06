@@ -98,35 +98,38 @@ my $PROXY_CONFIG  = {
                                                       #httpsな2ch/bbspinkのリンクをhttpに変換する
                                                       #専ブラの置換機能で弄れる場合はそちらを使う方が良い
                                                       #0で無効、1で有効
+  NCH_IO_DOMAIN => '5ch.io',                          #動作の対象とするドメイン名（5ch.io など）
   ENABLE_ALWAYS_HTTPS_FOR_2CH => 0,                   #プロクシ<->2ch系サイトの通信は常にhttpsで行う
                                                       #0で無効、1で有効
+  ENABLE_ONLY_NCH_IO_UPGRADE => 0,                    #NCH_IO_DOMAINへのHTTPSアップグレードのみを行う
+                                                      #0で無効、1で有効
   ENABLE_2CH_TO_nCH => 1,                             #   *dat書き換え*
-                                                      #nch.net<->2ch.netの変換を行う
+                                                      #2ch.net/5ch.net <-> NCH_IO_DOMAIN の変換を行う
                                                       #0で無効
-                                                      #1で2ch.netへのアクセスをnch.netへ変換
-                                                      #2で1に加えて2ch->nchへのリンク書き換え
-                                                      #3で1に加えてbbsmenuのみnch->2chへのリンク書き換え
-                                                      #4で3に加えてdatもnch->2chへのリンク書き換え
-                                                      # - 専ブラが5ch.netの板を認識できる
-                                                      #   - 専ブラの置換機能で2chのリンクを5chのに置換する/置換の必要なし ->  1
-                                                      #   - 専ブラに置換機能が無い/使用しない(串側で置換する)             ->  2
+                                                      #1で2ch.net/5ch.netへのアクセスをNCH_IO_DOMAINへ変換
+                                                      #2で1に加えて2ch/5ch->NCH_IO_DOMAINへのリンク書き換え
+                                                      #3で1に加えてbbsmenuのみNCH_IO_DOMAIN->2chへのリンク書き換え
+                                                      #4で3に加えてdatもNCH_IO_DOMAIN->2chへのリンク書き換え
+                                                      # - 専ブラが NCH_IO_DOMAIN の板を認識できる
+                                                      #   - 専ブラの置換機能で2chのリンクを置換する/置換の必要なし ->  1
+                                                      #   - 専ブラに置換機能が無い/使用しない(串側で置換する)       ->  2
                                                       # - 認識できない
-                                                      #   - 専ブラの置換機能で5chのリンクを2chのに置換する                ->  3
-                                                      #   - 専ブラに置換機能が無い/使用しない(串側で置換する)             ->  4
+                                                      #   - 専ブラの置換機能で NCH_IO_DOMAIN のリンクを2chのに置換する ->  3
+                                                      #   - 専ブラに置換機能が無い/使用しない(串側で置換する)          ->  4
   ENABLE_REPLACE_BE_AUTH_RESPONSE => 1,               #Beの認証時に302が返ってきたら200に置き換える
                                                       #0で無効、1で有効
   THREAD_TITLE_SEARCH_URL => '',                      #スレ検索に使うURL
                                                       #スレ検索でのURLの置換が必要な場合はURLを設定する
                                                       #URLを指定しなければ無効
-                                                      #ENABLE_2CH_TO_nCHが1 or 2なら2ch->5ch
-                                                      #                   3 or 4なら5ch->2ch
+                                                      #ENABLE_2CH_TO_nCHが1 or 2なら 2ch/5ch -> NCH_IO_DOMAIN
+                                                      #                   3 or 4なら NCH_IO_DOMAIN -> 2ch
   KEEP_COOKIE => 1,                                   #このプロクシで*.2ch.net、*.bbspink.comのcookieを保持するかどうかのフラグ
                                                       #0で無効、1で有効
   UNIQ_COOKIE => 0,                                   #KEEP_COOKIEが有効になっている状態で
                                                       #書き込み毎にcookieを変えたい場合はこれを有効にする
                                                       #0で無効、1で有効
   HANDLED_COOKIES => [qw(__cfduid yuki PREN)],        #KEEP_COOKIEが有効な時にプロクシで保持するクッキー
-  DAT_URL => '^https?://([\w]+)(\.\d+ch\.net|\.bbspink\.com)(:[\d]+)?/([\w]+)/(?:dat|kako/\d+(?:/\d+)?)/([\d]+(?:-[\d]+)?)\.dat(\.gz)?$',  #datへのアクセスかを判定する正規表現
+  DAT_URL => '^https?://([\w]+)(?:\.\d+ch\.net|\.\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E|\.bbspink\.com)(:[\d]+)?/([\w]+)/(?:dat|kako/\d+(?:/\d+)?)/([\d]+(?:-[\d]+)?)\.dat(\.gz)?$',  #datへのアクセスかを判定する正規表現
   NULL_DEVICE => '/dev/null',                         #nullデバイスの場所
   PID_FILE_NAME => "/tmp/2chproxy.pid",               #pidが書かれたファイル、2重起動禁止にも用いている
   LOG_FILE_NAME => "/tmp/2chproxy.log",               #ログファイル
@@ -1258,11 +1261,17 @@ sub connection() {
   &print_log(LOG_INFO, 'HTTP', "finish connection.\n");
 }
 
+#NCH_IO_DOMAINへの接続を判定する
+sub nch_io_match() {
+  my $request = shift;
+  return $request->uri->host =~ m@\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E$@;
+}
+
 #一部のドメインへの接続はUAとクッキーを変更する
 sub change_access_Nch_match() {
   my $request  = shift;
 
-  if ($request->uri->host =~ m@(\.\d+ch\.net|\.bbspink\.com)$@) {
+  if ($request->uri->host =~ m@(?:\d+ch\.net|\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E|bbspink\.com)$@) {
     return 1;
   }
   return 0;
@@ -1281,8 +1290,8 @@ sub change_access_Nch_request() {
     }
   }
 
-  if ($request->uri->host =~ m@(\.\d+ch\.net|\.bbspink\.com)$@) {
-    my $domain  = $1;
+  if ($request->uri->host =~ m@(?:\d+ch\.net|\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E|bbspink\.com)$@) {
+    my $domain  = $&;
     if ($PROXY_CONFIG->{USER_AGENT}) {
       &print_log(LOG_INFO, 'PROXY', 'change user-agent:'.$request->header('User-Agent')."->".$PROXY_CONFIG->{USER_AGENT}."\n");
       $request->header('User-Agent' => $PROXY_CONFIG->{USER_AGENT});
@@ -1300,16 +1309,16 @@ sub change_access_Nch_request() {
     }
     if ($PROXY_CONFIG->{ENABLE_2CH_TO_nCH}) {
       my $url = $request->uri->as_string;
-      $url =~ s|\.2ch\.net|.5ch.net|;
+      $url =~ s{\.(?:2|5)ch\.net}{"." . $PROXY_CONFIG->{NCH_IO_DOMAIN}}e;
       $request->uri($url);
       my $host = $request->header('Host');
       if ($host) {
-        $host =~ s|\.2ch\.net|.5ch.net|;
+        $host =~ s{\.(?:2|5)ch\.net}{"." . $PROXY_CONFIG->{NCH_IO_DOMAIN}}e;
         $request->header('Host' => $host);
       }
       my $referer = $request->header('Referer');
       if ($referer) {
-        $referer =~ s|\.2ch\.net|.5ch.net|;
+        $referer =~ s{\.(?:2|5)ch\.net}{"." . $PROXY_CONFIG->{NCH_IO_DOMAIN}}e;
         $request->header('Referer' => $referer);
       }
       &print_log(LOG_INFO, '2ch to Nch', 'rewrite_uri: '.$url."\n");
@@ -1329,17 +1338,17 @@ sub change_access_Nch_response() {
 
 sub bbsmenu_tolower_match() {
   my ($request, $data)  = @_;
-  if ($request->uri->as_string =~ m|^https?://menu\.\d+ch\.net(?::80)?/bbsmenu\.html$|) {
+  if ($request->uri->as_string =~ m@^https?://menu\.(?:\d+ch\.net|\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E)(?::80)?/bbsmenu\.html$@) {
     return 1;
   }
   return 0;
 }
 
-#ENABLE_ALWAYS_HTTPS_FOR_2CHが1のときはhttpをhttpsに変更する
+#ENABLE_ALWAYS_HTTPS_FOR_2CHが1、またはENABLE_ONLY_NCH_IO_UPGRADEが1のときはhttpをhttpsに変更する
 sub upgrade_2ch_request() {
   my $request = shift;
 
-  if ($PROXY_CONFIG->{ENABLE_ALWAYS_HTTPS_FOR_2CH}) {
+  if ($PROXY_CONFIG->{ENABLE_ONLY_NCH_IO_UPGRADE} || $PROXY_CONFIG->{ENABLE_ALWAYS_HTTPS_FOR_2CH}) {
     $request->uri->scheme("https");
     $request->uri->port(443);
     my $referer = $request->header('Referer');
@@ -1377,7 +1386,10 @@ sub bbsmenu_tolower_response() {
     $content  =~ s|<A HREF="(.*)">|<A HREF=$1>|g
   }
   if ($PROXY_CONFIG->{ENABLE_2CH_TO_nCH} >= 3) {
-    $content  =~ s|https?://(\w+)\.\d+ch\.net/|http://$1.2ch.net/|g;
+    $content =~ s{https?://(\w+)\.\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E/}{"http://$1.2ch.net/"}ge;
+  }
+  elsif ($PROXY_CONFIG->{ENABLE_2CH_TO_nCH} == 2) {
+    $content =~ s{https?://(\w+)\.(?:2|5)ch\.net/}{"http://$1." . $PROXY_CONFIG->{NCH_IO_DOMAIN} . "/"}ge;
   }
   $response->remove_header('Content-Encoding');
   $response->content(Encode::encode('cp932', $content, Encode::FB_HTMLCREF));
@@ -1409,12 +1421,12 @@ sub thread_title_search_response() {
   $content  = $response->content();
 
   if ($PROXY_CONFIG->{ENABLE_2CH_TO_nCH} == 1 || $PROXY_CONFIG->{ENABLE_2CH_TO_nCH} == 2) {
-    &print_log(LOG_INFO, 'THREAD SEARCH', "2ch->5ch\n");
-    $content =~ s|https?://([0-9a-zA-Z]+)\.2ch\.net/|http://$1.5ch.net|g;
+    &print_log(LOG_INFO, 'THREAD SEARCH', "2ch/5ch->" . $PROXY_CONFIG->{NCH_IO_DOMAIN} . "\n");
+    $content =~ s{https?://([0-9a-zA-Z]+)\.(?:2|5)ch\.net/}{"http://$1." . $PROXY_CONFIG->{NCH_IO_DOMAIN} . "/"}ge;
   }
   elsif ($PROXY_CONFIG->{ENABLE_2CH_TO_nCH} == 3 || $PROXY_CONFIG->{ENABLE_2CH_TO_nCH} == 4) {
-    &print_log(LOG_INFO, 'THREAD SEARCH', "5ch->2ch\n");
-    $content =~ s|https?://([0-9a-zA-Z]+)\.5ch\.net/|http://$1.2ch.net|g;
+    &print_log(LOG_INFO, 'THREAD SEARCH', $PROXY_CONFIG->{NCH_IO_DOMAIN} . "->2ch\n");
+    $content =~ s{https?://([0-9a-zA-Z]+)\.\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E/}{"http://$1.2ch.net/"}ge;
   }
   $response->content($content);
 }
@@ -1752,7 +1764,7 @@ sub scraping_2ch_response() {
 
 sub replace_be_auth_match() {
   my $request = shift;
-  return $PROXY_CONFIG->{ENABLE_REPLACE_BE_AUTH_RESPONSE} && $request->uri->as_string =~ m|://be\.[25]ch\.net(?::\d+)/test/login\.php|;
+  return $PROXY_CONFIG->{ENABLE_REPLACE_BE_AUTH_RESPONSE} && $request->uri->as_string =~ m@://be\.(?:[25]ch\.net|\Q$PROXY_CONFIG->{NCH_IO_DOMAIN}\E)(?::\d+)/test/login\.php@;
 }
 
 sub replace_be_auth_response(){
@@ -1860,6 +1872,7 @@ sub load_config_env() {
 sub initialize() {
   #コンフィグファイルの読み込み
   &load_config();
+
   #2重起動しているかの確認,起動中のプロクシの制御
   my $pid = &is_running();
   if ($kill_process) {
@@ -1885,30 +1898,38 @@ sub initialize() {
   &set_signals();
 
   #handlerの設定
-  &add_handler(
-    match => \&bbsmenu_tolower_match,
-    request => \&upgrade_2ch_request,
-    response_done => \&bbsmenu_tolower_response,
-  );
-  &add_handler(
-    match => \&scraping_2ch_match,
-    request => \&scraping_2ch_request,
-    response_done => \&scraping_2ch_response,
-  );
-  &add_handler(
-    match => \&thread_title_search_match,
-    response_done => \&thread_title_search_response,
-  );
-  &add_handler(
-    match => \&change_access_Nch_match,
-    request => \&change_access_Nch_request,
-    response_header => \&change_access_Nch_response,
-  );
-  &add_handler(
-    match => \&replace_be_auth_match,
-    request => \&upgrade_2ch_request,
-    response_header => \&replace_be_auth_response,
-  );
+  if ($PROXY_CONFIG->{ENABLE_ONLY_NCH_IO_UPGRADE}) {
+    &add_handler(
+      match => \&nch_io_match,
+      request => \&upgrade_2ch_request,
+    );
+  }
+  else {
+    &add_handler(
+      match => \&bbsmenu_tolower_match,
+      request => \&upgrade_2ch_request,
+      response_done => \&bbsmenu_tolower_response,
+    );
+    &add_handler(
+      match => \&scraping_2ch_match,
+      request => \&scraping_2ch_request,
+      response_done => \&scraping_2ch_response,
+    );
+    &add_handler(
+      match => \&thread_title_search_match,
+      response_done => \&thread_title_search_response,
+    );
+    &add_handler(
+      match => \&change_access_Nch_match,
+      request => \&change_access_Nch_request,
+      response_header => \&change_access_Nch_response,
+    );
+    &add_handler(
+      match => \&replace_be_auth_match,
+      request => \&upgrade_2ch_request,
+      response_header => \&replace_be_auth_response,
+    );
+  }
 }
 
 #main
